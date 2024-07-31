@@ -33,7 +33,7 @@ This document provides detailed descriptions of the variables used in the Terraf
 
 - **Variable Name**: `region`
 - **Type**: `string`
-- **Default Value**: `japaneast`
+- **Default Value**: `eastus2`
 
 ##### VNET Address IP Prefix
 

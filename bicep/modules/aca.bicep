@@ -19,6 +19,13 @@ param acaCertPassword string
 param acaDifyCustomerDomain string
 param difyApiImage string
 param difySandboxImage string
+param difyWebImage string
+param environment string
+param acrName string
+param acrLoginServer string
+param acrUsername string
+@secure()
+param acrPassword string
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2021-06-01' = {
   name: logAnalyticsName
@@ -343,7 +350,7 @@ resource workerApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'DB_HOST'
-              value: postgresHost
+              value: environment == 'prod' ? postgresHost : 'postgres'
             }
             {
               name: 'DB_PORT'
@@ -355,7 +362,7 @@ resource workerApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'REDIS_HOST'
-              value: redisHostName
+              value: environment == 'prod' ? redisHostName : 'redis'
             }
             {
               name: 'REDIS_PORT'
@@ -375,7 +382,7 @@ resource workerApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'CELERY_BROKER_URL'
-              value: 'redis://:${redisAccessKey}@${redisHostName}:6379/1'
+              value: environment == 'prod' ? 'redis://:${redisAccessKey}@${redisHostName}:6379/1' : 'redis://:${redisAccessKey}@redis:6379/1'
             }
             {
               name: 'STORAGE_TYPE'
@@ -399,11 +406,11 @@ resource workerApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'VECTOR_STORE'
-              value: 'pgvector'
+              value: environment == 'prod' ? 'pgvector' : 'qdrant'
             }
             {
               name: 'PGVECTOR_HOST'
-              value: postgresHost
+              value: environment == 'prod' ? postgresHost : 'postgres'
             }
             {
               name: 'PGVECTOR_PORT'
@@ -420,6 +427,14 @@ resource workerApp 'Microsoft.App/containerApps@2022-03-01' = {
             {
               name: 'PGVECTOR_DATABASE'
               value: 'pgvector'
+            }
+            {
+              name: 'QDRANT_URL'
+              value: environment == 'prod' ? '' : 'http://qdrant:6333'
+            }
+            {
+              name: 'QDRANT_API_KEY'
+              value: environment == 'prod' ? '' : 'difyai123456'
             }
             {
               name: 'INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH'
@@ -500,7 +515,7 @@ resource apiApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'DB_HOST'
-              value: postgresHost
+              value: environment == 'prod' ? postgresHost : 'postgres'
             }
             {
               name: 'DB_PORT'
@@ -512,7 +527,7 @@ resource apiApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'REDIS_HOST'
-              value: redisHostName
+              value: environment == 'prod' ? redisHostName : 'redis'
             }
             {
               name: 'REDIS_PORT'
@@ -532,7 +547,7 @@ resource apiApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'CELERY_BROKER_URL'
-              value: 'redis://:${redisAccessKey}@${redisHostName}:6379/1'
+              value: environment == 'prod' ? 'redis://:${redisAccessKey}@${redisHostName}:6379/1' : 'redis://:${redisAccessKey}@redis:6379/1'
             }
             {
               name: 'STORAGE_TYPE'
@@ -560,7 +575,7 @@ resource apiApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
             {
               name: 'PGVECTOR_HOST'
-              value: postgresHost
+              value: environment == 'prod' ? postgresHost : 'postgres'
             }
             {
               name: 'PGVECTOR_PORT'
@@ -630,12 +645,25 @@ resource webApp 'Microsoft.App/containerApps@2022-03-01' = {
         targetPort: 3000
         transport: 'tcp'
       }
+      registries: !empty(acrName) ? [
+        {
+          server: acrLoginServer
+          username: acrUsername
+          passwordSecretRef: 'acr-password'
+        }
+      ] : []
+      secrets: !empty(acrName) ? [
+        {
+          name: 'acr-password'
+          value: acrPassword
+        }
+      ] : []
     }
     template: {
       containers: [
         {
           name: 'langgenius'
-          image: 'langgenius/dify-web:0.6.11'
+          image: difyWebImage
           resources: {
             cpu: 1
             memory: '2Gi'
@@ -669,6 +697,124 @@ resource webApp 'Microsoft.App/containerApps@2022-03-01' = {
             }
           }
         ]
+      }
+    }
+  }
+}
+
+resource redisApp 'Microsoft.App/containerApps@2022-03-01' = if (environment == 'dev') {
+  name: 'redis'
+  location: location
+  properties: {
+    managedEnvironmentId: acaEnvironment.id
+    configuration: {
+      ingress: {
+        external: false
+        targetPort: 6379
+        transport: 'tcp'
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'redis'
+          image: 'redis:6-alpine'
+          resources: {
+            cpu: 1
+            memory: '2Gi'
+          }
+          command: [
+            'redis-server'
+            '--requirepass'
+            '${redisAccessKey}'
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
+    }
+  }
+}
+
+resource postgresApp 'Microsoft.App/containerApps@2022-03-01' = if (environment == 'dev') {
+  name: 'postgres'
+  location: location
+  properties: {
+    managedEnvironmentId: acaEnvironment.id
+    configuration: {
+      ingress: {
+        external: false
+        targetPort: 5432
+        transport: 'tcp'
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'postgres'
+          image: 'postgres:15-alpine'
+          resources: {
+            cpu: 1
+            memory: '2Gi'
+          }
+          env: [
+            {
+              name: 'POSTGRES_USER'
+              value: postgresAdminUsername
+            }
+            {
+              name: 'POSTGRES_PASSWORD'
+              value: postgresAdminPassword
+            }
+            {
+              name: 'POSTGRES_DB'
+              value: 'difypgsqldb'
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
+      }
+    }
+  }
+}
+
+resource qdrantApp 'Microsoft.App/containerApps@2022-03-01' = if (environment == 'dev') {
+  name: 'qdrant'
+  location: location
+  properties: {
+    managedEnvironmentId: acaEnvironment.id
+    configuration: {
+      ingress: {
+        external: false
+        targetPort: 6333
+        transport: 'tcp'
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'qdrant'
+          image: 'qdrant/qdrant:latest'
+          resources: {
+            cpu: 1
+            memory: '2Gi'
+          }
+          env: [
+            {
+              name: 'QDRANT_API_KEY'
+              value: 'difyai123456'
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 1
+        maxReplicas: 1
       }
     }
   }
